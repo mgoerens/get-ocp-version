@@ -1,22 +1,19 @@
 package main
 
 import "embed"
-// import "errors"
 import "fmt"
 import "os"
-
+import "strings"
 
 import "github.com/spf13/cobra"
-import "github.com/Masterminds/semver"
-import modSemver "golang.org/x/mod/semver"
-import "github.com/Masterminds/sprig/v3"
+import "github.com/Masterminds/semver/v3"
 import "gopkg.in/yaml.v3"
 
 //go:embed kubeOpenShiftVersionMap.yaml
 var content embed.FS
 
 var kubeOpenShiftVersionMap map[string]string
-var latestKubeVersion *semver.Version
+var upperKubeVersion *semver.Version
 
 type versionMap struct {
 	Versions []*versionMapping `yaml:"versions"`
@@ -43,77 +40,90 @@ func init() {
 		return
 	}
 
-	latestKubeVersion, _ = semver.NewVersion("0.0")
+	upperKubeVersion, _ = semver.NewVersion("0.0")
 	for _, versionMap := range versions.Versions {
-		currentVersion, _ := semver.NewVersion(versionMap.KubeVersion)
-		if currentVersion.GreaterThan(latestKubeVersion) {
-			latestKubeVersion = currentVersion
+		// Register then upper value of the known Kubernetes versions
+		kubeVersion, _ := semver.NewVersion(versionMap.KubeVersion)
+		if kubeVersion.GreaterThan(upperKubeVersion) {
+			upperKubeVersion = kubeVersion
 		}
 		kubeOpenShiftVersionMap[versionMap.KubeVersion] = versionMap.OcpVersion
 	}
 }
 
-// func GetOCPRange(kubeVersionRange string) error {
-// 	fmt.Println("enter get OCP range")
-// 	fmt.Println("provided Kubernetes Range: " + kubeVersionRange)
-
-// 	err := errors.New("error in getOCP Range")
-// 	return err
-// }
-
-const KuberVersionProcessingError  = "Error converting kubeVersion to an OCP range"
-
 func GetOCPRange(kubeVersionRange string) (string, error) {
-	semverCompare := sprig.GenericFuncMap()["semverCompare"].(func(string, string) (bool, error))
-	minOCPVersion := ""
-	maxOCPVersion := ""
-	for kubeVersion, OCPVersion := range kubeOpenShiftVersionMap {
-		match, err := semverCompare(kubeVersionRange, kubeVersion)
-		if err != nil {
-			return "", fmt.Errorf("%s : %s", KuberVersionProcessingError, err)
-		}
-		if match {
-			testOCPVersion := fmt.Sprintf("v%s", OCPVersion)
-			if minOCPVersion == "" || modSemver.Compare(testOCPVersion, fmt.Sprintf("v%s", minOCPVersion)) < 0 {
-				minOCPVersion = OCPVersion
-			}
-			if maxOCPVersion == "" || modSemver.Compare(testOCPVersion, fmt.Sprintf("v%s", maxOCPVersion)) > 0 {
-				maxOCPVersion = OCPVersion
-			}
-		}
+	if strings.Contains(kubeVersionRange, "||") {
+		return "", fmt.Errorf("Range contains unsupported constraint ||")
 	}
-	// Check if min ocp range is open ended, for example 1.* or >-=1.20
-	// To do this see if 1.999 is valid for the min OCP version range, not perfect but works until kubernetes hits 2.0.
-	if minOCPVersion != "" {
-		match, _ := semverCompare(kubeVersionRange, "1.999")
-		if match {
-			return fmt.Sprintf(">=%s", minOCPVersion), nil
-		} else {
-			if minOCPVersion == maxOCPVersion {
-				return minOCPVersion, nil
-			} else {
-				return fmt.Sprintf("%s - %s", minOCPVersion, maxOCPVersion), nil
+
+	minOCPRange, _ := semver.NewVersion("9.9")
+	maxOCPRange, _ := semver.NewVersion("0.0")
+
+	kubeVersionRangeConstraint, err := semver.NewConstraint(kubeVersionRange)
+	if err != nil {
+		return "", fmt.Errorf("Error converting %s to Constraint: %s", kubeVersionRange, err)
+	}
+
+	for kubeVersion, OCPVersion := range kubeOpenShiftVersionMap {
+		kubeVersionVersion, err := semver.NewVersion(kubeVersion)
+		if err != nil {
+			return "", fmt.Errorf("Error converting %s to Version: %s", kubeVersion, err)
+		}
+		isInRange, _ := kubeVersionRangeConstraint.Validate(kubeVersionVersion)
+		if isInRange {
+			OCPVersionVersion, err := semver.NewVersion(OCPVersion)
+			if err != nil {
+				return "", fmt.Errorf("Error converting %s to Version: %s", OCPVersion, err)
+			}
+			if OCPVersionVersion.LessThan(minOCPRange) {
+				minOCPRange = OCPVersionVersion
+			}
+			if OCPVersionVersion.GreaterThan(maxOCPRange) {
+				maxOCPRange = OCPVersionVersion
 			}
 		}
 	}
 
-	return "", fmt.Errorf("%s : Failed to determine a minimum OCP version", KuberVersionProcessingError)
+	// kubeVersionRange as Constraint
+	// For each kubeVersion in kubeOpenShiftMap
+	// 		Check if kubeVersion in kubeVersionRange
+	//		if Yes, register minOCP, maxOCP:
+	//			if min > corresponding OCP Version
+	//			if max < corresponding OCP Version
+	// Done
+
+	// Craft OCPRange from min / max
+	// if min not set
+
+	if minOCPRange.Original() == "9.9" {
+		return "", fmt.Errorf("Failed to match any known Kubernetes version to the provided range %s", kubeVersionRange)
+	}
+	if isRangeOpenEnded(kubeVersionRangeConstraint) {
+		return ">=" + minOCPRange.Original(), nil
+	}
+	if minOCPRange.Equal(maxOCPRange) {
+		return minOCPRange.Original(), nil
+	}
+	return ">=" + minOCPRange.Original() + " <=" + maxOCPRange.Original(), nil
 }
 
+func isRangeOpenEnded(kubeVersionRangeConstraint *semver.Constraints) bool {
+	nextUpperKubeVersion := upperKubeVersion.IncMinor()
+	isOpenEnded, _ := kubeVersionRangeConstraint.Validate(&nextUpperKubeVersion)
+	return isOpenEnded
+}
 
 var rootCmd = &cobra.Command{
     Use:  "get-ocp-version",
     Short: "get-ocp-version",
     Long: `get-ocp-version`,
     RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		resultOCPRange, err := GetOCPRange(kubeVersionRange)
 		if err != nil {
 			return err
 		}
 		fmt.Println(resultOCPRange)
-		// if err := GetOCPRange(); err != nil {
-		// 	return err
-		// }
 		return nil
     },
 }
@@ -121,11 +131,8 @@ var rootCmd = &cobra.Command{
 var kubeVersionRange string
 
 func main() {
-	// fmt.Println("Hello, world.")
-	// fmt.Println(kubeOpenShiftVersionMap)
 	rootCmd.PersistentFlags().StringVar(&kubeVersionRange, "kubeVersionRange", "", "Range of Kubernetes versions)")
     if err := rootCmd.Execute(); err != nil {
-        // fmt.Fprintf(os.Stderr, "Error in getting OCP range '%s'", err)
         os.Exit(1)
     }
 }
