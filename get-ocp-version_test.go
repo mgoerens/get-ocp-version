@@ -12,6 +12,7 @@ func getUpperOCPVersion() string {
 // TODO: prerelease ?
 // TODO: Tilde (~) Range Comparisons ?
 // TODO: Caret (^) Range Comparisons ?
+// TODO: != operator ?
 
 var _ = Describe("Unit tests for getOCPRange", func() {
 	DescribeTable("Providing a valid range of Kubernetes Version",
@@ -51,7 +52,7 @@ var _ = Describe("Unit tests for getOCPRange", func() {
 	Entry("When providing a single version with patch value other than zero", "1.14.1"),
 	PEntry("When providing only a major version", "1"), // TODO: currently getting ">=4.1"
 	Entry("When providing an invalid range", ">=1.20 <=1.14"),
-	Entry("When the range contains an unsupported constraint", "1.14 || 1.16"),
+	Entry("When the range contains an unsupported operator ||", "1.14 || 1.16"),
 	)
 
 })
