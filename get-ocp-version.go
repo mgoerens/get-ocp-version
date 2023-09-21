@@ -90,24 +90,24 @@ func GetOCPRange(kubeVersionRange string) (string, error) {
 		return "", fmt.Errorf("Error converting %s to Constraint: %v", kubeVersionRange, err)
 	}
 
-	for kubeVersion, OCPVersion := range kubeOpenShiftVersionMap {
+	for kubeVersionString, OCPVersionString := range kubeOpenShiftVersionMap {
 		// Check which of the known Kubernetes versions validate the Constraint.
-		kubeVersionVersion, err := semver.NewVersion(kubeVersion)
+		kubeVersionObj, err := semver.NewVersion(kubeVersionString)
 		if err != nil {
-			return "", fmt.Errorf("Error converting %s to Version: %v", kubeVersion, err)
+			return "", fmt.Errorf("Error converting %s to Version: %v", kubeVersionString, err)
 		}
-		isInRange, _ := kubeVersionRangeConstraint.Validate(kubeVersionVersion)
+		isInRange, _ := kubeVersionRangeConstraint.Validate(kubeVersionObj)
 		if isInRange {
 			// Register the corresponding minimum and maximum OCP versions.
-			OCPVersionVersion, err := semver.NewVersion(OCPVersion)
+			OCPVersionObj, err := semver.NewVersion(OCPVersionString)
 			if err != nil {
-				return "", fmt.Errorf("Error converting %s to Version: %v", OCPVersion, err)
+				return "", fmt.Errorf("Error converting %s to Version: %v", OCPVersionString, err)
 			}
-			if OCPVersionVersion.LessThan(minOCPRange) {
-				minOCPRange = OCPVersionVersion
+			if OCPVersionObj.LessThan(minOCPRange) {
+				minOCPRange = OCPVersionObj
 			}
-			if OCPVersionVersion.GreaterThan(maxOCPRange) {
-				maxOCPRange = OCPVersionVersion
+			if OCPVersionObj.GreaterThan(maxOCPRange) {
+				maxOCPRange = OCPVersionObj
 			}
 		}
 	}
