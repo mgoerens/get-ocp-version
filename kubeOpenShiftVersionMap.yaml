@@ -1,3 +1,4 @@
+# Based on https://access.redhat.com/solutions/4870701
 versions:
 - kube-version: "1.26"
   ocp-version: "4.13"
